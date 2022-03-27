@@ -23,14 +23,15 @@ RUN yarn run build:prod
 ################################################################################
 
 # Fetch python3.9 and python2.7
-FROM python:3.9-slim-buster as collector
+FROM python:3.9-buster as collector
 
 # Install all python dependencies.
 ADD sandbox/requirements.txt requirements.txt
 ADD sandbox/requirements3.txt requirements3.txt
 RUN \
   apt update && \
-  apt install -y --no-install-recommends python2 python-pip python-setuptools && \
+  apt install -y --no-install-recommends python2 python-pip python-setuptools python-dev && \
+  pip2 install wheel && \
   pip2 install -r requirements.txt && \
   pip3 install -r requirements3.txt
 
