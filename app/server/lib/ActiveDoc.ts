@@ -10,6 +10,7 @@ import {ActionSummary} from "app/common/ActionSummary";
 import {
   ApplyUAOptions,
   ApplyUAResult,
+  DataLimitStatus,
   DataSourceTransformed,
   ForkResult,
   ImportOptions,
@@ -34,6 +35,7 @@ import {DocData} from 'app/common/DocData';
 import {DocSnapshots} from 'app/common/DocSnapshot';
 import {DocumentSettings} from 'app/common/DocumentSettings';
 import {normalizeEmail} from 'app/common/emails';
+import {Features} from 'app/common/Features';
 import {FormulaProperties, getFormulaProperties} from 'app/common/GranularAccessClause';
 import {byteString, countIf, safeJsonParse} from 'app/common/gutil';
 import {InactivityTimer} from 'app/common/InactivityTimer';
@@ -51,6 +53,7 @@ import {Authorizer} from 'app/server/lib/Authorizer';
 import {checksumFile} from 'app/server/lib/checksumFile';
 import {Client} from 'app/server/lib/Client';
 import {DEFAULT_CACHE_TTL, DocManager} from 'app/server/lib/DocManager';
+import {ICreateActiveDocOptions} from 'app/server/lib/ICreate';
 import {makeForkIds} from 'app/server/lib/idUtils';
 import {GRIST_DOC_SQL, GRIST_DOC_WITH_TABLE1_SQL} from 'app/server/lib/initialDocSql';
 import {ISandbox} from 'app/server/lib/ISandbox';
@@ -153,25 +156,28 @@ export class ActiveDoc extends EventEmitter {
   private _muted: boolean = false;  // If set, changes to this document should not propagate
                                     // to outside world
   private _migrating: number = 0;   // If positive, a migration is in progress
-  private _initializationPromise: Promise<boolean>|null = null;
+  private _initializationPromise: Promise<void>|null = null;
                                     // If set, wait on this to be sure the ActiveDoc is fully
                                     // initialized.  True on success.
   private _fullyLoaded: boolean = false;  // Becomes true once all columns are loaded/computed.
   private _lastMemoryMeasurement: number = 0;   // Timestamp when memory was last measured.
   private _fetchCache = new MapWithTTL<string, Promise<TableDataAction>>(DEFAULT_CACHE_TTL);
   private _rowCount?: number;
+  private _productFeatures?: Features;
+  private _gracePeriodStart: Date|null = null;
 
   // Timer for shutting down the ActiveDoc a bit after all clients are gone.
   private _inactivityTimer = new InactivityTimer(() => this.shutdown(), Deps.ACTIVEDOC_TIMEOUT * 1000);
   private _recoveryMode: boolean = false;
   private _shuttingDown: boolean = false;
 
-  constructor(docManager: DocManager, docName: string, private _options?: {
-    safeMode?: boolean,
-    docUrl?: string
-  }) {
+  constructor(docManager: DocManager, docName: string, private _options?: ICreateActiveDocOptions) {
     super();
     if (_options?.safeMode) { this._recoveryMode = true; }
+    if (_options?.doc) {
+      this._productFeatures = _options.doc.workspace.org.billingAccount?.product.features;
+      this._gracePeriodStart = _options.doc.gracePeriodStart;
+    }
     this._docManager = docManager;
     this._docName = docName;
     this.docStorage = new DocStorage(docManager.storageManager, docName);
@@ -217,6 +223,24 @@ export class ActiveDoc extends EventEmitter {
     if (await this._granularAccess.canReadEverything(docSession)) {
       return this._rowCount;
     }
+  }
+
+  public async getDataLimitStatus(): Promise<DataLimitStatus> {
+    if (this._rowLimit && this._rowCount) {
+      const ratio = this._rowCount / this._rowLimit;
+      if (ratio > 1) {
+        const start = this._gracePeriodStart;
+        const days = this._productFeatures?.gracePeriodDays;
+        if (start && days && moment().diff(moment(start), 'days') >= days) {
+          return 'deleteOnly';
+        } else {
+          return 'gracePeriod';
+        }
+      } else if (ratio > 0.9) {
+        return 'approachingLimit';
+      }
+    }
+    return null;
   }
 
   public async getUserOverride(docSession: OptDocSession) {
@@ -668,12 +692,7 @@ export class ActiveDoc extends EventEmitter {
    * Makes sure document is completely initialized.  May throw if doc is broken.
    */
   public async waitForInitialization() {
-    if (this._initializationPromise) {
-      if (!await this._initializationPromise) {
-        throw new Error('ActiveDoc initialization failed');
-      }
-    }
-    return true;
+    await this._initializationPromise;
   }
 
   // Check if user has rights to download this doc.
@@ -905,6 +924,17 @@ export class ActiveDoc extends EventEmitter {
     // Be careful not to sneak into user action queue before Calculate action, otherwise
     // there'll be a deadlock.
     await this.waitForInitialization();
+
+    if (
+      await this.getDataLimitStatus() === "deleteOnly" &&
+      !actions.every(action => [
+          'RemoveTable', 'RemoveColumn', 'RemoveRecord', 'BulkRemoveRecord',
+          'RemoveViewSection', 'RemoveView', 'ApplyUndoActions',
+        ].includes(action[0] as string))
+    ) {
+      throw new Error("Document is in delete-only mode");
+    }
+
     // Granular access control implemented in _applyUserActions.
     return await this._applyUserActions(docSession, actions, options);
   }
@@ -1228,7 +1258,7 @@ export class ActiveDoc extends EventEmitter {
         ...this.getLogMeta(docSession),
         rowCount: sandboxActionBundle.rowCount
       });
-      this._rowCount = sandboxActionBundle.rowCount;
+      await this._updateRowCount(sandboxActionBundle.rowCount);
       await this._reportDataEngineMemory();
     } else {
       // Create default SandboxActionBundle to use if the data engine is not called.
@@ -1456,6 +1486,25 @@ export class ActiveDoc extends EventEmitter {
     };
   }
 
+  private get _rowLimit(): number | undefined {
+    return this._productFeatures?.baseMaxRowsPerDocument;
+  }
+
+  private async _updateGracePeriodStart(gracePeriodStart: Date | null) {
+    this._gracePeriodStart = gracePeriodStart;
+    await this.getHomeDbManager()?.setDocGracePeriodStart(this.docName, gracePeriodStart);
+  }
+
+  private async _updateRowCount(rowCount: number) {
+    this._rowCount = rowCount;
+    const exceedingRowLimit = this._rowLimit && rowCount > this._rowLimit;
+    if (exceedingRowLimit && !this._gracePeriodStart) {
+      await this._updateGracePeriodStart(new Date());
+    } else if (!exceedingRowLimit && this._gracePeriodStart) {
+      await this._updateGracePeriodStart(null);
+    }
+  }
+
   /**
    * Prepares a single attachment by adding it DocStorage and returns a UserAction to apply.
    */
@@ -1587,7 +1636,7 @@ export class ActiveDoc extends EventEmitter {
   @ActiveDoc.keepDocOpen
   private async _finishInitialization(
     docSession: OptDocSession, pendingTableNames: string[], onDemandNames: string[], startTime: number
-  ) {
+  ): Promise<void> {
     try {
       await this._tableMetadataLoader.wait();
       await this._tableMetadataLoader.clean();
@@ -1616,13 +1665,12 @@ export class ActiveDoc extends EventEmitter {
       const closeTimeout = Math.max(loadMs, 1000) * Deps.ACTIVEDOC_TIMEOUT;
       this._inactivityTimer.setDelay(closeTimeout);
       this._log.debug(docSession, `loaded in ${loadMs} ms, InactivityTimer set to ${closeTimeout} ms`);
-      return true;
     } catch (err) {
+      this._fullyLoaded = true;
       if (!this._shuttingDown) {
         this._log.warn(docSession, "_finishInitialization stopped with %s", err);
+        throw new Error('ActiveDoc initialization failed: ' + String(err));
       }
-      this._fullyLoaded = true;
-      return false;
     }
   }
 

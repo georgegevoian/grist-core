@@ -35,11 +35,12 @@ import {DocPageModel} from 'app/client/models/DocPageModel';
 import {UserError} from 'app/client/models/errors';
 import {urlState} from 'app/client/models/gristUrlState';
 import {getFilterFunc, QuerySetManager} from 'app/client/models/QuerySet';
-import {getUserOrgPrefObs, getUserOrgPrefsObs} from 'app/client/models/UserPrefs';
+import {getUserOrgPrefObs, getUserOrgPrefsObs, markAsSeen} from 'app/client/models/UserPrefs';
 import {App} from 'app/client/ui/App';
 import {DocHistory} from 'app/client/ui/DocHistory';
 import {startDocTour} from "app/client/ui/DocTour";
 import {showDocSettingsModal} from 'app/client/ui/DocumentSettings';
+import {isTourActive} from "app/client/ui/OnBoardingPopups";
 import {IPageWidget, toPageWidget} from 'app/client/ui/PageWidgetPicker';
 import {IPageWidgetLink, linkFromId, selectBy} from 'app/client/ui/selectBy';
 import {startWelcomeTour} from 'app/client/ui/welcomeTour';
@@ -53,7 +54,7 @@ import {DisposableWithEvents} from 'app/common/DisposableWithEvents';
 import {isSchemaAction, UserAction} from 'app/common/DocActions';
 import {OpenLocalDocResult} from 'app/common/DocListAPI';
 import {isList, isRefListType, RecalcWhen} from 'app/common/gristTypes';
-import {HashLink, IDocPage, SpecialDocPage} from 'app/common/gristUrls';
+import {HashLink, IDocPage, isViewDocPage, SpecialDocPage, ViewDocPage} from 'app/common/gristUrls';
 import {undef, waitObs} from 'app/common/gutil';
 import {LocalPlugin} from "app/common/plugin";
 import {StringUnion} from 'app/common/StringUnion';
@@ -132,6 +133,9 @@ export class GristDoc extends DisposableWithEvents {
 
   public readonly userOrgPrefs = getUserOrgPrefsObs(this.docPageModel.appModel);
 
+  // If the doc has a docTour. Used also to enable the UI button to restart the tour.
+  public readonly hasDocTour: Computed<boolean>;
+
   private _actionLog: ActionLog;
   private _undoStack: UndoStack;
   private _lastOwnActionGroup: ActionGroupWithCursorPos|null = null;
@@ -140,6 +144,7 @@ export class GristDoc extends DisposableWithEvents {
   private _rightPanelTool = createSessionObs(this, "rightPanelTool", "none", RightPanelTool.guard);
   private _viewLayout: ViewLayout|null = null;
   private _showGristTour = getUserOrgPrefObs(this.userOrgPrefs, 'showGristTour');
+  private _seenDocTours = getUserOrgPrefObs(this.userOrgPrefs, 'seenDocTours');
 
   constructor(
     public readonly app: App,
@@ -152,7 +157,7 @@ export class GristDoc extends DisposableWithEvents {
     } = {}
   ) {
     super();
-    console.log("RECEIVED DOC RESPONSE", openDocResponse.doc);
+    console.log("RECEIVED DOC RESPONSE", openDocResponse);
     this.docData = new DocData(this.docComm, openDocResponse.doc);
     this.docModel = new DocModel(this.docData);
     this.querySetManager = QuerySetManager.create(this, this.docModel, this.docComm);
@@ -161,6 +166,9 @@ export class GristDoc extends DisposableWithEvents {
 
     // Maintain the MetaRowModel for the global document info, including docId and peers.
     this.docInfo = this.docModel.docInfoRow;
+
+    this.hasDocTour = Computed.create(this, use =>
+      use(this.docModel.allTableIds.getObservable()).includes('GristDocTour'));
 
     const defaultViewId = this.docInfo.newDefaultViewId;
 
@@ -217,24 +225,38 @@ export class GristDoc extends DisposableWithEvents {
     }));
 
     // Start welcome tour if flag is present in the url hash.
+    let tourStarting = false;
     this.autoDispose(subscribe(urlState().state, async (_use, state) => {
-      if (state.welcomeTour || state.docTour || this._shouldAutoStartWelcomeTour()) {
-        // On boarding tours were not designed with mobile support in mind. Disable until fixed.
-        if (isNarrowScreen()) {
-          return;
-        }
-        await this._waitForView();
-        await delay(0); // we need to wait an extra bit.
+      // Onboarding tours were not designed with mobile support in mind. Disable until fixed.
+      if (isNarrowScreen()) {
+        return;
+      }
+      // If we have an active tour (or are in the process of starting one), don't start a new one.
+      if (tourStarting || isTourActive()) {
+        return;
+      }
+      const autoStartDocTour = this.hasDocTour.get() && !this._seenDocTours.get()?.includes(this.docId());
+      const docTour = state.docTour || autoStartDocTour;
+      const welcomeTour = state.welcomeTour || this._shouldAutoStartWelcomeTour();
 
-        // Remove any tour-related hash-tags from the URL. So #repeat-welcome-tour and
-        // #repeat-doc-tour are used as triggers, but will immediately disappear.
-        await urlState().pushUrl({welcomeTour: false, docTour: false},
-          {replace: true, avoidReload: true});
+      if (welcomeTour || docTour) {
+        tourStarting = true;
+        try {
+          await this._waitForView();
 
-        if (!state.docTour) {
-          startWelcomeTour(() => this._showGristTour.set(false));
-        } else {
-          await startDocTour(this.docData, this.docComm, () => null);
+          // Remove any tour-related hash-tags from the URL. So #repeat-welcome-tour and
+          // #repeat-doc-tour are used as triggers, but will immediately disappear.
+          await urlState().pushUrl({welcomeTour: false, docTour: false},
+            {replace: true, avoidReload: true});
+
+          if (!docTour) {
+            startWelcomeTour(() => this._showGristTour.set(false));
+          } else {
+            const onFinishCB = () => (autoStartDocTour && markAsSeen(this._seenDocTours, this.docId()));
+            await startDocTour(this.docData, this.docComm, onFinishCB);
+          }
+        } finally {
+          tourStarting = false;
         }
       }
     }));
@@ -303,12 +325,13 @@ export class GristDoc extends DisposableWithEvents {
       const section = use(this.viewModel.activeSection);
       const viewId = use(activeViewId);
       const view = use(section.viewInstance);
-      return (typeof viewId === 'number') ? view : null;
+      return isViewDocPage(viewId) ? view : null;
     });
     // then listen if the view is present, because we still need to wait for it load properly
     this.autoDispose(viewInstance.addListener(async (view) => {
-      if (!view) { return; }
-      await view.getLoadingDonePromise();
+      if (view) {
+        await view.getLoadingDonePromise();
+      }
       // finally set the current view as fully loaded
       this.currentView.set(view);
     }));
@@ -320,7 +343,7 @@ export class GristDoc extends DisposableWithEvents {
       if (!view) { return undefined; }
       // get current viewId
       const viewId = use(this.activeViewId);
-      if (typeof viewId != 'number') { return undefined; }
+      if (!isViewDocPage(viewId)) { return undefined; }
       // read latest position
       const currentPosition = use(view.cursor.currentPosition);
       if (currentPosition) { return { ...currentPosition, viewId }; }
@@ -714,7 +737,10 @@ export class GristDoc extends DisposableWithEvents {
    * If setAsActiveSection is true, the section in cursorPos is set as the current
    * active section.
    */
-  public async recursiveMoveToCursorPos(cursorPos: CursorPos, setAsActiveSection: boolean): Promise<void> {
+  public async recursiveMoveToCursorPos(
+    cursorPos: CursorPos,
+    setAsActiveSection: boolean,
+    silent: boolean = false): Promise<void> {
     try {
       if (!cursorPos.sectionId) { throw new Error('sectionId required'); }
       if (!cursorPos.rowId) { throw new Error('rowId required'); }
@@ -762,12 +788,12 @@ export class GristDoc extends DisposableWithEvents {
         if (!srcRowId || typeof srcRowId !== 'number') { throw new Error('cannot trace rowId'); }
         await this.recursiveMoveToCursorPos({
           rowId: srcRowId,
-          sectionId: srcSection.id.peek()
-        }, false);
+          sectionId: srcSection.id.peek(),
+        }, false, silent);
       }
       const view: ViewRec = section.view.peek();
-      const viewId = view.getRowId();
-      if (viewId != this.activeViewId.get()) { await this.openDocPage(view.getRowId()); }
+      const docPage: ViewDocPage = section.isRaw.peek() ? "data" : view.getRowId();
+      if (docPage != this.activeViewId.get()) { await this.openDocPage(docPage); }
       if (setAsActiveSection) { view.activeSectionId(cursorPos.sectionId); }
       const fieldIndex = cursorPos.fieldIndex;
       const viewInstance = await waitObs(section.viewInstance);
@@ -784,7 +810,9 @@ export class GristDoc extends DisposableWithEvents {
       await delay(0);
     } catch (e) {
       console.debug(`_recursiveMoveToCursorPos(${JSON.stringify(cursorPos)}): ${e}`);
-      throw new UserError('There was a problem finding the desired cell.');
+      if (!silent) {
+        throw new UserError('There was a problem finding the desired cell.');
+      }
     }
   }
 
@@ -801,8 +829,17 @@ export class GristDoc extends DisposableWithEvents {
    * Waits for a view to be ready
    */
   private async _waitForView() {
+    // For pages like ACL's, there isn't a view instance to wait for.
+    if (!this.viewModel.activeSection.peek().getRowId()) {
+      return null;
+    }
     const view = await waitObs(this.viewModel.activeSection.peek().viewInstance);
-    await view?.getLoadingDonePromise();
+    if (!view) {
+      return null;
+    }
+    await view.getLoadingDonePromise();
+    // Wait extra bit for scroll to happen.
+    await delay(0);
     return view;
   }
 
@@ -887,12 +924,12 @@ export class GristDoc extends DisposableWithEvents {
    */
   private async _switchToSectionId(sectionId: number) {
     const section: ViewSectionRec = this.docModel.viewSections.getRowModel(sectionId);
-    const view: ViewRec = section.view.peek();
-    if (!view.id.peek()) {
+    if (section.isRaw.peek()) {
       // This is raw data view
       await urlState().pushUrl({docPage: 'data'});
       this.viewModel.activeSectionId(sectionId);
     } else {
+      const view: ViewRec = section.view.peek();
       await this.openDocPage(view.getRowId());
       view.activeSectionId(sectionId);  // this.viewModel will reflect this with a delay.
     }
@@ -929,7 +966,11 @@ export class GristDoc extends DisposableWithEvents {
    * For first-time users on personal org, start a welcome tour.
    */
   private _shouldAutoStartWelcomeTour(): boolean {
-    // TODO: decide what to do when both a docTour and grist welcome tour are available.
+    // When both a docTour and grist welcome tour are available, show only the docTour, leaving
+    // the welcome tour for another doc (e.g. a new one).
+    if (this.hasDocTour.get()) {
+      return false;
+    }
 
     // Only show the tour if one is on a personal org and can edit. This excludes templates (on
     // the Templates org, which may have their own tour) and team sites (where user's intended

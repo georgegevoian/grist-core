@@ -18,9 +18,10 @@ export const TEST_HTTPS_OFFSET = process.env.GRIST_TEST_HTTPS_OFFSET ?
   parseInt(process.env.GRIST_TEST_HTTPS_OFFSET, 10) : undefined;
 
 // Database fields that we permit in entities but don't want to cross the api.
-const INTERNAL_FIELDS = new Set(['apiKey', 'billingAccountId', 'firstLoginAt', 'filteredOut', 'ownerId',
-                                 'stripeCustomerId', 'stripeSubscriptionId', 'stripePlanId',
-                                 'stripeProductId', 'userId', 'isFirstTimeUser', 'allowGoogleLogin']);
+const INTERNAL_FIELDS = new Set([
+  'apiKey', 'billingAccountId', 'firstLoginAt', 'filteredOut', 'ownerId', 'gracePeriodStart', 'stripeCustomerId',
+  'stripeSubscriptionId', 'stripePlanId', 'stripeProductId', 'userId', 'isFirstTimeUser', 'allowGoogleLogin',
+]);
 
 /**
  * Adapt a home-server or doc-worker URL to match the hostname in the request URL. For custom
@@ -150,10 +151,10 @@ export function getDocScope(req: Request): DocScope {
  *     is limited to docs/workspaces that have been removed.
  */
 export function getScope(req: Request): Scope {
-  const urlId = req.params.did || req.params.docId;
+  const {specialPermit, docAuth} = (req as RequestWithLogin);
+  const urlId = req.params.did || req.params.docId || docAuth?.docId || undefined;
   const userId = getUserId(req);
   const org = (req as RequestWithOrg).org;
-  const {specialPermit} = (req as RequestWithLogin);
   const includeSupport = isParameterOn(req.query.includeSupport);
   const showRemoved = isParameterOn(req.query.showRemoved);
   return {urlId, userId, org, includeSupport, showRemoved, specialPermit};
