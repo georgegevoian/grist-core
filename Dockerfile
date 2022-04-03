@@ -42,7 +42,7 @@ RUN \
 # Fetch gvisor-based sandbox. Note, to enable it to run within default
 # unprivileged docker, layers of protection that require privilege have
 # been stripped away, see https://github.com/google/gvisor/issues/4371
-FROM gristlabs/gvisor-unprivileged:buster as sandbox
+FROM georgegevoian/gvisor-unprivileged:buster as sandbox
 
 ################################################################################
 ## Run-time stage
