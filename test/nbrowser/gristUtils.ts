@@ -1345,6 +1345,7 @@ export async function redo(optCount: number = 1, optTimeout?: number) {
  */
 export async function checkForErrors() {
   const errors = await driver.executeScript<string[]>(() => (window as any).getAppErrors());
+  console.log(errors, errors[0]);
   assert.deepEqual(errors, []);
 }
 
