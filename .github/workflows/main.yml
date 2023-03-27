@@ -82,7 +82,7 @@ jobs:
         if: contains(matrix.tests, ':server-')
         run: |
           export TEST_SPLITS=$(echo $TESTS | sed "s/.*:server-\([^:]*\).*/\1/")
-          MOCHA_WEBDRIVER_HEADLESS=1 yarn run test:server
+          MOCHA_WEBDRIVER_HEADLESS=1 VERBOSE=1 DEBUG=1 yarn run test:server
         env:
           GRIST_DOCS_MINIO_ACCESS_KEY: administrator
           GRIST_DOCS_MINIO_SECRET_KEY: administrator
