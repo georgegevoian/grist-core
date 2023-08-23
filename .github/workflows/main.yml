@@ -102,6 +102,10 @@ jobs:
           GRIST_DOCS_MINIO_PORT: 9000
           GRIST_DOCS_MINIO_BUCKET: grist-docs-test
 
+      - name: Install chromedriver
+        if: contains(matrix.tests, ':nbrowser-')
+        run: ./node_modules/selenium-webdriver/bin/linux/selenium-manager --driver chromedriver
+
       - name: Run main tests without minio and redis
         if: contains(matrix.tests, ':nbrowser-')
         run: |
