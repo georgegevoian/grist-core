@@ -73,11 +73,13 @@ async function givenAccess(level?: AccessLevel) {
     await gu.waitForServer();
   }
 }
-
 // Checks if access prompt is visible.
 const hasPrompt = () => driver.find('.test-config-widget-access-accept').isPresent();
+// Waits for access prompt to be visible.
+const waitForPrompt = async () => await gu.waitToPass(async () =>
+  assert.isTrue(await hasPrompt()), 1000);
 // Accepts new access level.
-const accept = () => driver.find('.test-config-widget-access-accept').click();
+const accept = () => driver.findWait('.test-config-widget-access-accept', 1000).click();
 // When refreshing, we need to make sure widget repository is enabled once again.
 async function refresh() {
   await driver.navigate().refresh();
@@ -493,6 +495,7 @@ describe('CustomWidgetsConfig', function () {
     await toggleWidgetMenu();
     await clickOption(COLUMN_WIDGET);
     await accept();
+    await widget.waitForFrame();
     assert.equal(await driver.find(pickerDrop('Column')).getText(), 'Pick a column');
     assert.isFalse(await driver.find('.test-vfc-visible-fields-select-all').isPresent());
     assert.isTrue(await driver.find('.test-config-widget-label-for-Column').isPresent());
@@ -694,6 +697,7 @@ describe('CustomWidgetsConfig', function () {
     await gu.setType(/Numeric/);
     await gu.selectSectionByTitle('Widget');
     await driver.find(".test-right-tab-pagewidget").click();
+    await gu.waitForServer();
     // Drop should be empty,
     assert.equal(await driver.find(pickerDrop("M1")).getText(), "Pick a text column");
     assert.isEmpty(await getListItems("M2"));
@@ -910,25 +914,31 @@ describe('CustomWidgetsConfig', function () {
     // Select widget without request
     await toggleWidgetMenu();
     await clickOption(NORMAL_WIDGET);
+    await widget.waitForFrame();
     assert.isFalse(await hasPrompt());
     assert.equal(await givenAccess(), AccessLevel.none);
     assert.equal(await widget.access(), AccessLevel.none);
     // Select widget that requests read access.
     await toggleWidgetMenu();
     await clickOption(READ_WIDGET);
-    assert.isTrue(await hasPrompt());
+    await widget.waitForFrame();
+    await waitForPrompt();
     assert.equal(await givenAccess(), AccessLevel.none);
     assert.equal(await widget.access(), AccessLevel.none);
     await accept();
+    await widget.waitForFrame();
     assert.equal(await givenAccess(), AccessLevel.read_table);
     assert.equal(await widget.access(), AccessLevel.read_table);
     // Select widget that requests full access.
     await toggleWidgetMenu();
     await clickOption(FULL_WIDGET);
+    await widget.waitForFrame();
+    await waitForPrompt();
     assert.isTrue(await hasPrompt());
     assert.equal(await givenAccess(), AccessLevel.none);
     assert.equal(await widget.access(), AccessLevel.none);
     await accept();
+    await widget.waitForFrame();
     assert.equal(await givenAccess(), AccessLevel.full);
     assert.equal(await widget.access(), AccessLevel.full);
     await gu.undo(5);

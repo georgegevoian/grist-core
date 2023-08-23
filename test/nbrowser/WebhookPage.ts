@@ -192,7 +192,7 @@ describe('WebhookPage', function () {
     await openWebhookPage();
 
     // Open another tab.
-    await driver.executeScript("return window.open('about:blank', '_blank')");
+    await driver.executeScript("window.open('about:blank', '_blank')");
     const [ownerTab, owner2Tab] = await driver.getAllWindowHandles();
 
     await driver.switchTo().window(owner2Tab);

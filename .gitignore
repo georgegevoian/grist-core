@@ -79,3 +79,4 @@ timings.txt
 xunit.xml
 
 **/_build
+!mocha-webdriver-0.2.14.tgz

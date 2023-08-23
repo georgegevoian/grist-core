@@ -893,6 +893,10 @@ export async function userActionsVerify(expectedUserActions: unknown[]): Promise
     if (!Array.isArray(assertError.actual)) {
       throw new Error('userActionsVerify: no user actions, run userActionsCollect() first');
     }
+    if (!Array.isArray(assertError.expected)) {
+      throw new Error('userActionsVerify: no expected user actions');
+    }
+
     assertError.actual = assertError.actual.map((a: any) => JSON.stringify(a) + ",").join("\n");
     assertError.expected = assertError.expected.map((a: any) => JSON.stringify(a) + ",").join("\n");
     assert.deepEqual(assertError.actual, assertError.expected);
@@ -1361,6 +1365,9 @@ export async function closeSearch() {
 }
 
 export async function closeTooltip() {
+  if (!await driver.find('.test-tooltip').isPresent()) { return; }
+
+  await driver.find('.test-tooltip').mouseMove();
   await driver.mouseMoveBy({x : 100, y: 100});
   await waitToPass(async () => {
     assert.equal(await driver.find('.test-tooltip').isPresent(), false);
@@ -1539,29 +1546,28 @@ export async function applyTypeTransform() {
 }
 
 export async function isMac(): Promise<boolean> {
-  return /Darwin|Mac|iPod|iPhone|iPad/i.test((await driver.getCapabilities()).get('platform'));
+  const platform = (await driver.getCapabilities()).getPlatform() ?? '';
+  return /Darwin|Mac|mac os x|iPod|iPhone|iPad/i.test(platform);
 }
 
 export async function modKey() {
   return await isMac() ? Key.COMMAND : Key.CONTROL;
 }
 
-// For copy-pasting, use different key combinations for Chrome on Mac.
-// See http://stackoverflow.com/a/41046276/328565
 export async function copyKey() {
-  return await isMac() ? Key.chord(Key.CONTROL, Key.INSERT) : Key.chord(Key.CONTROL, 'c');
+  return await isMac() ? Key.chord(Key.COMMAND, 'c') : Key.chord(Key.CONTROL, 'c');
 }
 
 export async function cutKey() {
-  return await isMac() ? Key.chord(Key.CONTROL, Key.DELETE) : Key.chord(Key.CONTROL, 'x');
+  return await isMac() ? Key.chord(Key.COMMAND, 'x') : Key.chord(Key.CONTROL, 'x');
 }
 
 export async function pasteKey() {
-  return await isMac() ? Key.chord(Key.SHIFT, Key.INSERT) : Key.chord(Key.CONTROL, 'v');
+  return await isMac() ? Key.chord(Key.COMMAND, 'v') : Key.chord(Key.CONTROL, 'v');
 }
 
 export async function selectAllKey() {
-  return await isMac() ? Key.chord(Key.HOME, Key.SHIFT, Key.END) : Key.chord(Key.CONTROL, 'a');
+  return await isMac() ? Key.chord(Key.COMMAND, 'a') : Key.chord(Key.CONTROL, 'a');
 }
 
 /**
@@ -1575,14 +1581,13 @@ export async function sendKeys(...keys: string[]) {
     const toRelease: string[] =  [];
     for (const part of keys) {
       for (const key of part) {
-        if ([Key.SHIFT, Key.CONTROL, Key.ALT, Key.META].includes(key)) {
+        if ([Key.ALT, Key.CONTROL, Key.SHIFT, Key.COMMAND, Key.META].includes(key)) {
           a.keyDown(key);
           toRelease.push(key);
         } else if (key === Key.NULL) {
           toRelease.splice(0).reverse().forEach(k => a.keyUp(k));
         } else {
-          a.keyDown(key);
-          a.keyUp(key);
+          a.sendKeys(key);
         }
       }
     }
@@ -1590,11 +1595,10 @@ export async function sendKeys(...keys: string[]) {
 }
 
 /**
- * Clears active input/textarea by sending CTRL HOME + CTRL + SHIFT END + DELETE.
+ * Clears active input/textarea.
  */
 export async function clearInput() {
-  const ctrl = await modKey();
-  return sendKeys(Key.chord(ctrl, Key.HOME), Key.chord(ctrl, Key.SHIFT, Key.END), Key.DELETE);
+  return sendKeys(await selectAllKey(), Key.DELETE);
 }
 
 /**
@@ -2671,7 +2675,7 @@ export async function getEnabledOptions(): Promise<SortOption[]> {
  * on whole test suit if needed.
  */
 export async function onNewTab(action: () => Promise<void>) {
-  await driver.executeScript("return window.open('about:blank', '_blank')");
+  await driver.executeScript("window.open('about:blank', '_blank')");
   const tabs = await driver.getAllWindowHandles();
   await driver.switchTo().window(tabs[tabs.length - 1]);
   await action();

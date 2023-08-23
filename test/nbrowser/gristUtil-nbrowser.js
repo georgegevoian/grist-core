@@ -302,9 +302,15 @@ const gu = {
   *                         endCell[1]: 0-based column index.
   **/
   async selectGridArea(startCell, endCell) {
-    let start = await gu.getCell({rowNum: startCell[0], col: startCell[1]});
-    let end = await gu.getCell({rowNum: endCell[0], col: endCell[1]});
-    await driver.withActions(a => a.click(start).keyDown($.SHIFT).click(end).keyUp($.SHIFT));
+    const [startRowNum, startCol] = startCell;
+    const [endRowNum, endCol] = endCell;
+    if (startRowNum === endRowNum && startCol === endCol) {
+      await gu.getCell({rowNum: endRowNum, col: endCol}).click();
+    } else {
+      const start = await gu.getCell({rowNum: startRowNum, col: startCol});
+      const end = await gu.getCell({rowNum: endRowNum, col: endCol});
+      await driver.withActions(a => a.click(start).keyDown($.SHIFT).click(end).keyUp($.SHIFT));
+    }
   },
 
   /**
