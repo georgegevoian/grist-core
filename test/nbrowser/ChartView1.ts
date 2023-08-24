@@ -8,13 +8,13 @@ import {setupTestSuite} from 'test/nbrowser/testUtils';
 
 describe('ChartView1', function() {
   this.timeout(20000);
-  setupTestSuite();
+  const cleanup = setupTestSuite();
   let api: UserAPI;
   let doc: any;
 
   before(async function() {
     const session = await gu.session().teamSite.login();
-    doc = await session.importFixturesDoc('ChartData.grist');
+    doc = await session.tempDoc(cleanup, 'ChartData.grist');
     api = session.createHomeApi();
   });
 
@@ -642,7 +642,7 @@ describe('ChartView1', function() {
   it('should resize chart when side panels open or close', async function() {
     // Open a document with some chart data.
     const session = await gu.session().teamSite.login();
-    doc = await session.importFixturesDoc('ChartData.grist');
+    doc = await session.tempDoc(cleanup, 'ChartData.grist');
     await gu.toggleSidePanel('right', 'close');
 
     // Add a chart section.
