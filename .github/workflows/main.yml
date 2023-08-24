@@ -72,6 +72,10 @@ jobs:
       - name: Build Node.js code
         run: yarn run build:prod
 
+      - name: Install chromedriver
+        if: contains(matrix.tests, ':nbrowser-') || contains(matrix.tests, ':smoke:')
+        run: ./node_modules/selenium-webdriver/bin/linux/selenium-manager --driver chromedriver
+
       - name: Run smoke test
         if: contains(matrix.tests, ':smoke:')
         run: VERBOSE=1 DEBUG=1 MOCHA_WEBDRIVER_HEADLESS=1 yarn run test:smoke
@@ -101,10 +105,6 @@ jobs:
           GRIST_DOCS_MINIO_ENDPOINT: localhost
           GRIST_DOCS_MINIO_PORT: 9000
           GRIST_DOCS_MINIO_BUCKET: grist-docs-test
-
-      - name: Install chromedriver
-        if: contains(matrix.tests, ':nbrowser-')
-        run: ./node_modules/selenium-webdriver/bin/linux/selenium-manager --driver chromedriver
 
       - name: Run main tests without minio and redis
         if: contains(matrix.tests, ':nbrowser-')
