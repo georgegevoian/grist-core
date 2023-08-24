@@ -77,7 +77,6 @@ describe('BundleActions', function() {
 
     // For good measure, check that REDO works too.
     await gu.redo(4);
-    await driver.findContentWait('.column_name', /^A$/, 200);
     assert.deepEqual(await gu.getVisibleGridCells({col: 'A', rowNums: [1, 2, 3]}), ['LILY', 'KATHY', 'KAREN']);
     cell = gu.getCell({col: 'Name', rowNum: 1});
     assert.equal(await cell.find('.field_clip').matches('.invalid'), true);

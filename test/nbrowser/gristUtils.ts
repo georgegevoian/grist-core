@@ -1211,8 +1211,8 @@ export async function removeTable(tableId: string) {
 export async function undo(optCount: number = 1, optTimeout?: number) {
   for (let i = 0; i < optCount; ++i) {
     await driver.find('.test-undo').doClick();
+    await waitForServer(optTimeout);
   }
-  await waitForServer(optTimeout);
 }
 
 
@@ -1270,8 +1270,8 @@ export function revertChanges(test: () => Promise<void>, invariant: () => any = 
 export async function redo(optCount: number = 1, optTimeout?: number) {
   for (let i = 0; i < optCount; ++i) {
     await driver.find('.test-redo').doClick();
+    await waitForServer(optTimeout);
   }
-  await waitForServer(optTimeout);
 }
 
 /**
