@@ -13,4 +13,5 @@
 !plugins
 !test
 !ext
+!mocha-webdriver-0.2.14.tgz
 **/_build

@@ -14,7 +14,7 @@ FROM node:18-buster as builder
 
 # Install all node dependencies.
 WORKDIR /grist
-COPY package.json yarn.lock /grist/
+COPY package.json yarn.lock mocha-webdriver-0.2.14.tgz /grist/
 RUN yarn install --frozen-lockfile --verbose --network-timeout 600000
 
 # Install any extra node dependencies (at root level, to avoid having to wrestle
