@@ -7,7 +7,6 @@ import {EnvironmentSnapshot} from 'test/server/testUtils';
 
 describe('DocTutorial', function () {
   this.timeout(60000);
-  setupTestSuite();
 
   gu.bigScreen();
 
