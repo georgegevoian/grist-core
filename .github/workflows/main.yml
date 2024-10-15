@@ -11,7 +11,7 @@ on:
 
 jobs:
   build_and_test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # it is helpful to know which sets of tests would have succeeded,
       # even when there is a failure.
