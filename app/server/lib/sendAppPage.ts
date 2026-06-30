@@ -20,6 +20,7 @@ import { AttachedCustomWidgets, IAttachedCustomWidget } from "app/common/widgetT
 import { SUPPORT_EMAIL } from "app/gen-server/lib/homedb/HomeDBManager";
 import { appSettings } from "app/server/lib/AppSettings";
 import { isAnonymousUser, isSingleUserMode, RequestWithLogin } from "app/server/lib/Authorizer";
+import { isExternalFullEditionConfigured } from "app/server/lib/bootstrapFullEdition";
 import { RequestWithOrg } from "app/server/lib/extractOrg";
 import { GristServer } from "app/server/lib/GristServer";
 import {
@@ -28,6 +29,7 @@ import {
   getTemplateOrg,
   getUserPresenceMaxUsers,
 } from "app/server/lib/gristSettings";
+import { isUnderRestartShell } from "app/server/lib/RestartShellWorker";
 import { getSupportedEngineChoices } from "app/server/lib/serverUtils";
 import { readLoadedLngs, readLoadedNamespaces } from "app/server/localization";
 
@@ -87,6 +89,13 @@ export function makeGristConfig(options: MakeGristConfigOptions): GristLoadConfi
     (homeUrl && new URL(homeUrl).hostname === "localhost") || false;
   const mreq = req as RequestWithOrg | undefined;
 
+  // The runtime external-full-edition switch only works on grist-oss (which bakes in the
+  // env vars) and only takes effect under the RestartShell, which consults
+  // resolveFullEditionWorker on the next fork. Gating on both keeps the admin buttons off
+  // images where a click could never convert (a genuine grist/grist-ee image, or
+  // GRIST_RESTART_SHELL disabled).
+  const externalFullEditionConfigured = isExternalFullEditionConfigured() && isUnderRestartShell();
+
   // Configure form framing behavior.
 
   const config: GristLoadConfig = {
@@ -135,6 +144,8 @@ export function makeGristConfig(options: MakeGristConfigOptions): GristLoadConfi
     telemetry: server?.getTelemetry().getTelemetryConfig(req as RequestWithLogin | undefined),
     deploymentType: server?.getDeploymentType(),
     forceEnableEnterprise: isAffirmative(process.env.GRIST_FORCE_ENABLE_ENTERPRISE),
+    // Lets the admin UI offer the switch to/from the external full edition (see above).
+    supportsExternalFullEdition: externalFullEditionConfigured,
     templateOrg: getTemplateOrg(),
     onboardingTutorialDocId: getOnboardingTutorialDocId(),
     canCloseAccount: isAffirmative(process.env.GRIST_ACCOUNT_CLOSE),

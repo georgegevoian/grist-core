@@ -12,7 +12,7 @@ import * as http from "http";
 
 // IPC messages exchanged between shell and worker.
 export interface ShellToWorker { action: "connection"; }
-export interface WorkerToShell { action: "ready" | "restart"; }
+export interface WorkerToShell { action: "ready" | "restart" | "busy"; }
 
 export function isUnderRestartShell(): boolean {
   return isAffirmative(process.env.GRIST_UNDER_RESTART_SHELL);
@@ -46,8 +46,28 @@ export function createRestartShellWorkerServer(): http.Server {
  */
 export async function signalRestartShellReady(): Promise<void> {
   if (process.env.GRIST_TEST_RESTART_SHELL_READY_DELAY) {
-    await delay(Number(process.env.GRIST_TEST_RESTART_SHELL_READY_DELAY));
+    // While stalling the ready signal, optionally emit busy heartbeats, mirroring how a
+    // worker doing slow startup work (e.g. downloading the full edition) keeps the shell's
+    // watchdog from flagging it as stalled.
+    const busyInterval = Number(process.env.GRIST_TEST_RESTART_SHELL_BUSY_INTERVAL) || 0;
+    const heartbeat = busyInterval ? setInterval(signalRestartShellBusy, busyInterval) : undefined;
+    try {
+      await delay(Number(process.env.GRIST_TEST_RESTART_SHELL_READY_DELAY));
+    } finally {
+      if (heartbeat) { clearInterval(heartbeat); }
+    }
   }
   const ready: WorkerToShell = { action: "ready" };
   process.send?.(ready);
+}
+
+/**
+ * Tell the parent RestartShell that this worker is still doing legitimate,
+ * long-running startup work (e.g. downloading the full edition) and is not
+ * stalled. Resets the shell's unhealthy watchdog, so call it repeatedly (e.g.
+ * on an interval) until the work completes and `signalRestartShellReady` runs.
+ */
+export function signalRestartShellBusy(): void {
+  const busy: WorkerToShell = { action: "busy" };
+  process.send?.(busy);
 }

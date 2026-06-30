@@ -1,8 +1,9 @@
 import { makeT } from "app/client/lib/localization";
+import { AppModel } from "app/client/models/AppModel";
 import { BaseUrlSection } from "app/client/ui/BaseUrlSection";
 import { DraftChangesManager } from "app/client/ui/DraftChanges";
-import { EditionSection } from "app/client/ui/EditionSection";
-import { quickSetupContinueButton, QuickSetupSection } from "app/client/ui/QuickSetupContinueButton";
+import { EditionSection, externalFullEditionSwitchModal } from "app/client/ui/EditionSection";
+import { ApplyResult, quickSetupContinueButton, QuickSetupSection } from "app/client/ui/QuickSetupContinueButton";
 import { quickSetupStepHeader } from "app/client/ui/QuickSetupStepHeader";
 import { cssQuickSetupCard } from "app/client/ui/SettingsLayout";
 
@@ -26,11 +27,17 @@ export class QuickSetupServerStep extends Disposable implements QuickSetupSectio
   public isApplying: Observable<boolean>;
 
   private _baseUrl = BaseUrlSection.create(this);
-  private _edition = EditionSection.create(this);
+  private _edition: EditionSection;
   private _drafts = DraftChangesManager.create(this);
 
-  constructor(private _onComplete: () => void) {
+  constructor(private _appModel: AppModel, private _onComplete: () => void) {
     super();
+    // Pass the notifier so the runtime external-full-edition switch (download + restart) is
+    // available in the wizard, mirroring the admin panel. It's a normal staged section here:
+    // confirming stages it, and Continue applies the batch (persisting any base-URL change
+    // first, then downloading + restarting) -- so switching no longer drops other pending
+    // changes.
+    this._edition = EditionSection.create(this, { notifier: this._appModel.notifier });
     this._drafts.addSection(this._baseUrl);
     this._drafts.addSection(this._edition);
     this.canProceed = Computed.create(this, use =>
@@ -50,8 +57,14 @@ export class QuickSetupServerStep extends Disposable implements QuickSetupSectio
     return null;
   }
 
-  public async apply(): Promise<void> {
-    await this._drafts.applyAll();
+  public async apply(): Promise<ApplyResult> {
+    // Read before applying -- applyAll() clears the section's dirty state. A staged
+    // external-full-edition switch shows a download-aware modal over the (slow) restart.
+    const editionSwitch = this._edition.stagedExternalFullEditionSwitch();
+    const applying = this._drafts.applyAll();
+    return editionSwitch ?
+      externalFullEditionSwitchModal(editionSwitch, applying) :
+      applying;
   }
 
   public buildDom(): DomContents {

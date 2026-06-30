@@ -124,7 +124,7 @@ export class QuickSetup extends Disposable {
 
   private _buildServerStep(): DomContents {
     return dom.create((owner) => {
-      const step = QuickSetupServerStep.create(owner, () => this._advanceStep());
+      const step = QuickSetupServerStep.create(owner, this._appModel, () => this._advanceStep());
       return step.buildDom();
     });
   }

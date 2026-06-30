@@ -32,7 +32,7 @@ import { BaseUrlSection } from "app/client/ui/BaseUrlSection";
 import { BootKeyStatus } from "app/client/ui/BootKeyStatus";
 import { InstallConfigsAPI } from "app/client/ui/ConfigsAPI";
 import { DraftChangesManager } from "app/client/ui/DraftChanges";
-import { EditionSection } from "app/client/ui/EditionSection";
+import { EditionSection, externalFullEditionSwitchModal } from "app/client/ui/EditionSection";
 import { peekSetupReturnFromGetGristCom } from "app/client/ui/GetGristComProvider";
 import { buildOutgoingRequestsPanel, buildOutgoingRequestsSummary } from "app/client/ui/OutgoingRequestsStatus";
 import { pagePanels } from "app/client/ui/PagePanels";
@@ -296,10 +296,17 @@ class AdminInstallationPanel extends Disposable {
       t("Restart Grist?"),
       t("Restart"),
       () => {
+        // Read before applying -- applyAll() clears the section's dirty state.
+        const editionSwitch = this._editionSection.stagedExternalFullEditionSwitch();
         // Fire-and-forget so confirmModal closes immediately; otherwise it
-        // hangs on top of the spinner for the whole restart duration.
-        spinnerModal(t("Restarting Grist..."), this._performRestart())
-          .catch(err => reportError(err as Error));
+        // hangs on top of the spinner for the whole restart duration. A staged
+        // external-full-edition switch shows its own download-aware modal instead
+        // of the generic restarting spinner.
+        const restarting = this._performRestart();
+        (editionSwitch ?
+          externalFullEditionSwitchModal(editionSwitch, restarting) :
+          spinnerModal(t("Restarting Grist..."), restarting)
+        ).catch(err => reportError(err as Error));
       },
       {
         explanation: dom("div",

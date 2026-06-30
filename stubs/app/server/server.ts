@@ -9,7 +9,9 @@ import { commonUrls } from "app/common/gristUrls";
 import { isAffirmative } from "app/common/gutil";
 import { ActivationsManager } from "app/gen-server/lib/ActivationsManager";
 import { HomeDBManager } from "app/gen-server/lib/homedb/HomeDBManager";
+import { canRestart } from "app/server/lib/adminPageConfig";
 import { appSettings } from "app/server/lib/AppSettings";
+import { maybeManageFullEdition, resolveFullEditionWorker } from "app/server/lib/bootstrapFullEdition";
 import { updateDb } from "app/server/lib/dbUtils";
 import { getAdminEmail, invalidateReloadableSettings } from "app/server/lib/gristSettings";
 import { initializeAppSettings } from "app/server/lib/initializeAppSettings";
@@ -53,7 +55,7 @@ setDefaultEnv("GRIST_WIDGET_LIST_URL", commonUrls.gristLabsWidgetRepository);
 import { MergedServer, parseServerTypes } from "app/server/MergedServer";
 import { runRestartShell, shouldRunAsRestartShell } from "app/server/lib/RestartShell";
 import {
-  createRestartShellWorkerServer, isUnderRestartShell, signalRestartShellReady,
+  createRestartShellWorkerServer, isUnderRestartShell, signalRestartShellBusy, signalRestartShellReady,
 } from "app/server/lib/RestartShellWorker";
 /* eslint-enable @import-x/order */
 
@@ -199,10 +201,19 @@ export async function main() {
 
   if (shouldRunAsRestartShell()) {
     // Shell owns the socket and manages a forked worker. Returns the
-    // RestartShell handle instead of a FlexServer.
+    // RestartShell handle instead of a FlexServer. The child is resolved on every
+    // (re)fork: if a downloaded full-edition copy is present and current, the shell
+    // runs that relocated worker; otherwise the baked-in OSS worker (this file).
     return runRestartShell({
       publicPort: G.port,
-      childEntryPoint: __filename,
+      childEntryPoint: () => {
+        try {
+          return resolveFullEditionWorker() ?? { entryPoint: __filename };
+        } catch (e) {
+          log.error("Failed to resolve full-edition worker, using baked-in: %s", e);
+          return { entryPoint: __filename };
+        }
+      },
     });
   }
 
@@ -235,6 +246,19 @@ export async function main() {
   // to keep track of.
   await initializeAppSettings();
 
+  // Make the on-disk full-edition copy match the `useExternalFullEdition` flag, and report
+  // whether a restart is needed so the RestartShell reforks into the right worker. The
+  // download can take minutes; under the RestartShell, send "busy" heartbeats so its spawn
+  // watchdog doesn't flag us as stalled while it runs.
+  const busyHeartbeat = isUnderRestartShell() ?
+    setInterval(signalRestartShellBusy, 5000) : undefined;
+  let fullEditionRestartRequested: boolean;
+  try {
+    ({ restartRequested: fullEditionRestartRequested } = await maybeManageFullEdition());
+  } finally {
+    if (busyHeartbeat) { clearInterval(busyHeartbeat); }
+  }
+
   if (serverTypes.includes("home")) {
     const db = new HomeDBManager();
     await db.connect();
@@ -259,6 +283,24 @@ export async function main() {
   }
   if (isUnderRestartShell()) {
     await signalRestartShellReady();
+  }
+
+  if (fullEditionRestartRequested) {
+    // The full-edition copy was just installed (enable), or its stamp was dropped to fall
+    // back to OSS (revert; the OSS worker reclaims the copy after this refork). Restart so
+    // the RestartShell reforks into the right worker. Use the same IPC the admin restart
+    // endpoint uses; do NOT process.exit(), which aborts the worker and brings the
+    // RestartShell down. If we can't self-restart, an operator must.
+    if (process.send && canRestart()) {
+      log.info("bootstrapFullEdition: requesting restart to apply full edition change");
+      // Flag the server as not-ready before the restart so health checks fail fast while
+      // it cycles, mirroring the admin restart endpoint (see attachEarlyEndpoints.ts).
+      mergedServer.flexServer.setReady(false);
+      process.send({ action: "restart" });
+    } else {
+      log.warn("bootstrapFullEdition: full edition change staged but cannot self-restart; " +
+        "please restart the server to apply it");
+    }
   }
 
   return mergedServer.flexServer;

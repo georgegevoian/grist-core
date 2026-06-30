@@ -17,6 +17,7 @@ import { canRestart, makeAdminPageConfig } from "app/server/lib/adminPageConfig"
 import { appSettings } from "app/server/lib/AppSettings";
 import { RequestWithLogin } from "app/server/lib/Authorizer";
 import { BootProbes } from "app/server/lib/BootProbes";
+import { isExternalFullEditionConfigured } from "app/server/lib/bootstrapFullEdition";
 import { expressWrap } from "app/server/lib/expressWrap";
 import { GristServer } from "app/server/lib/GristServer";
 import {
@@ -171,10 +172,16 @@ export function attachEarlyEndpoints(options: AttachOptions) {
     "/api/install/prefs",
     json({ limit: "1mb" }),
     expressWrap(async (req, res) => {
-      const prefs = req.body;
+      const prefs = req.body as InstallPrefs;
+      // Reject runtime external-full-edition switching unless the image is built for it
+      // (mirrors the admin-UI gate; `maybeManageFullEdition` enforces the same on boot).
+      // Without this, the kill-switch would be UI-only.
+      if (prefs?.useExternalFullEdition !== undefined && !isExternalFullEditionConfigured()) {
+        throw new ApiError("External full edition is not available on this installation", 400);
+      }
       await gristServer.getActivations().updatePrefs(prefs);
 
-      const { telemetry, envVars } = prefs as InstallPrefs;
+      const { telemetry, envVars } = prefs;
 
       if (telemetry) {
         // Make sure the Telemetry singleton picks up the changes to telemetry preferences.

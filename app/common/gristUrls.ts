@@ -1020,6 +1020,12 @@ export interface GristLoadConfig {
   // Force enterprise deployment? For backwards compatibility with grist-ee Docker image
   forceEnableEnterprise?: boolean;
 
+  // True on a grist-oss image that can download and run the external full edition at
+  // runtime (see bootstrapFullEdition.ts). The admin UI uses it to offer "Switch to full
+  // edition" before converting and "Switch to community edition" after (chosen by the
+  // current edition). Never set on a genuine grist/grist-ee image.
+  supportsExternalFullEdition?: boolean;
+
   // The org containing public templates and tutorials.
   templateOrg?: string | null;
 

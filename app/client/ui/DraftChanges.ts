@@ -44,6 +44,15 @@ export interface ConfigSection {
   /** True when the section's changes require a server restart to take effect. */
   needsRestart: boolean;
   /**
+   * Optional. How many readiness polls (`waitUntilReady` attempts, ~1s each)
+   * this section's restart may need -- the manager waits the longest requested
+   * by any dirty section. Only consulted when `isDirty` is true. Omit (or
+   * return undefined) for the default wait. Used by slow restarts like the
+   * external-full-edition download, which reforks the server after downloading
+   * hundreds of MB.
+   */
+  restartWaitAttempts?: number;
+  /**
    * Describe the draft change(s) for display in the restart banner.
    * Only consulted when `isDirty` is true (the manager filters first).
    * Returning multiple entries lets a section surface several distinct
@@ -167,7 +176,10 @@ export class DraftChangesManager extends Disposable {
       let redirected = false;
       if (restart && failures.length === 0 && dirty.some(s => s.needsRestart)) {
         await this._configAPI.restartServer();
-        if (!await this._configAPI.waitUntilReady()) {
+        // Wait the longest any dirty section asks for (e.g. a slow full-edition
+        // download), falling back to waitUntilReady's own default when none do.
+        const attempts = Math.max(0, ...dirty.map(s => s.restartWaitAttempts ?? 0)) || undefined;
+        if (!await this._configAPI.waitUntilReady({ attempts })) {
           throw new Error("Timed out waiting for Grist server to restart");
         }
         for (const section of dirty) {

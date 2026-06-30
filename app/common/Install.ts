@@ -4,6 +4,17 @@ export interface InstallPrefs extends PendingChanges {
   telemetry?: TelemetryPrefs;
   envVars?: Record<string, any>;
   checkForLatestVersion?: boolean;
+  /**
+   * If true, this (OSS) installation should download a complete copy of the
+   * full edition at boot and run that copy (the "external" full edition, as
+   * opposed to a full-capable image whose code is baked in). Persists across
+   * restarts so that every server in a multi-server deployment converges on its
+   * next boot. Set to `false` to stop running it (an already-downloaded copy
+   * stays on disk).
+   *
+   * See `app/server/lib/bootstrapFullEdition.ts`.
+   */
+  useExternalFullEdition?: boolean;
 }
 
 export interface PendingChanges {

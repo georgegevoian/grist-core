@@ -95,6 +95,17 @@ FROM node:22-trixie-slim
 
 ARG GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING=false
 
+# Runtime "convert to full edition" support (grist-oss only; empty/unset elsewhere).
+# See app/server/lib/bootstrapFullEdition.ts. When GRIST_FULL_EDITION_DIR is set, the
+# server can download a complete copy of the full edition at runtime into that (writable,
+# persistent) directory and run it instead of the baked-in OSS build.
+ARG GRIST_FULL_EDITION_DIR=
+ARG GRIST_FULL_EDITION_REF=
+ARG GRIST_FULL_EDITION_URL_AMD64=
+ARG GRIST_FULL_EDITION_URL_ARM64=
+ARG GRIST_FULL_EDITION_SHA256_AMD64=
+ARG GRIST_FULL_EDITION_SHA256_ARM64=
+
 # Install curl for docker healthchecks, libexpat1 and libsqlite3-0 for python3
 # library binary dependencies, and procps for managing gvisor processes.
 RUN \
@@ -180,6 +191,12 @@ ENV \
   GRIST_INST_DIR=/persist \
   GRIST_SESSION_COOKIE=grist_core \
   GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING=${GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING} \
+  GRIST_FULL_EDITION_DIR=${GRIST_FULL_EDITION_DIR} \
+  GRIST_FULL_EDITION_REF=${GRIST_FULL_EDITION_REF} \
+  GRIST_FULL_EDITION_URL_AMD64=${GRIST_FULL_EDITION_URL_AMD64} \
+  GRIST_FULL_EDITION_URL_ARM64=${GRIST_FULL_EDITION_URL_ARM64} \
+  GRIST_FULL_EDITION_SHA256_AMD64=${GRIST_FULL_EDITION_SHA256_AMD64} \
+  GRIST_FULL_EDITION_SHA256_ARM64=${GRIST_FULL_EDITION_SHA256_ARM64} \
   GVISOR_FLAGS="-unprivileged -ignore-cgroups" \
   NODE_OPTIONS="--no-deprecation" \
   NODE_ENV=production \

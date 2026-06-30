@@ -22,9 +22,21 @@ import * as childProcess from "child_process";
 import * as http from "http";
 import * as net from "net";
 
+// Describes a worker to fork: which module to run, and optionally the working
+// directory and extra environment for it. Used to run a relocated copy of Grist
+// (see app/server/lib/bootstrapFullEdition.ts).
+export interface ForkSpec {
+  entryPoint: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
 export interface RestartShellOptions {
   publicPort: number;
-  childEntryPoint: string;
+  // The worker to fork. A plain path forks that module; a function is re-evaluated
+  // on every (re)fork, so the shell can switch which Grist it runs across restarts
+  // (e.g. baked-in OSS vs. a downloaded full-edition copy). It must not throw.
+  childEntryPoint: string | (() => ForkSpec);
 }
 
 // Tunables exposed for tests.
@@ -268,16 +280,24 @@ export class RestartShell {
    * signal and its eventual exit. `ready` rejects if the child exits
    * before signalling ready.
    */
-  private _forkWorker(): { child: childProcess.ChildProcess; ready: Promise<void>; exited: Promise<ExitInfo> } {
+  private _forkWorker(
+    onBusy: () => void = () => undefined,
+  ): { child: childProcess.ChildProcess; ready: Promise<void>; exited: Promise<ExitInfo> } {
+    const spec: ForkSpec = typeof this._options.childEntryPoint === "function" ?
+      this._options.childEntryPoint() :
+      { entryPoint: this._options.childEntryPoint };
+
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...spec.env,
       GRIST_UNDER_RESTART_SHELL: "1",
       PORT: String(this._actualPort),
     };
     // Clear GRIST_RESTART_SHELL so the child can't re-detect shell mode.
     delete env.GRIST_RESTART_SHELL;
 
-    const c = childProcess.fork(this._options.childEntryPoint, [], {
+    const c = childProcess.fork(spec.entryPoint, [], {
+      cwd: spec.cwd,
       env,
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
@@ -295,6 +315,7 @@ export class RestartShell {
         switch (msg?.action) {
           case "ready": resolve(); break;
           case "restart": void this.restart(); break;
+          case "busy": onBusy(); break;
         }
       });
       void exited.then(({ code, signal }) =>
@@ -343,11 +364,21 @@ export class RestartShell {
    */
   private async _spawnOrFail(): Promise<SpawnResult> {
     log.info("RestartShell: spawning child");
-    const watchdog = setTimeout(() => {
+    const markUnhealthy = () => {
       log.error(`RestartShell: spawn still running after ${Deps.unhealthyTimeoutMs}ms, marking unhealthy`);
       this._healthy = false;
-    }, Deps.unhealthyTimeoutMs);
-    const { child, ready, exited } = this._forkWorker();
+    };
+    let watchdog = setTimeout(markUnhealthy, Deps.unhealthyTimeoutMs);
+    // A worker doing long, legitimate startup work (e.g. downloading the full
+    // edition) sends "busy" heartbeats; treat the spawn as still progressing
+    // rather than stalled, resetting the watchdog (and recovering health if it
+    // already fired) until "ready" or an exit.
+    const onBusy = () => {
+      clearTimeout(watchdog);
+      this._healthy = true;
+      watchdog = setTimeout(markUnhealthy, Deps.unhealthyTimeoutMs);
+    };
+    const { child, ready, exited } = this._forkWorker(onBusy);
     try {
       await ready;
       log.info("RestartShell: child ready");
