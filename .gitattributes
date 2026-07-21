@@ -1,0 +1,6 @@
+# Substitute the $Format:...$ placeholders in .git_archival.txt when this repo
+# is exported via `git archive` (e.g. GitHub's "Download ZIP" and the auto-
+# generated "Source code" assets on a release). This lets buildtools/build.sh
+# recover the commit and detect a release tag when building from a source
+# archive that has no .git directory. See build_version_file() in build.sh.
+.git_archival.txt export-subst

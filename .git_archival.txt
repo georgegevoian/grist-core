@@ -1,0 +1,3 @@
+node: $Format:%H$
+node-abbrev: $Format:%h$
+describe: $Format:%(describe:tags,match=v[0-9]*)$

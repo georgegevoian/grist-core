@@ -43,6 +43,15 @@ build_version_file() {
       tag=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
       if [[ -z "$dirty" && "$tag" == "v$version" ]]; then channel="release"; else channel="core"; fi
     fi
+  elif [[ -f .git_archival.txt ]] && ! grep -q '\$Format:' .git_archival.txt; then
+    # No .git, but built from a `git archive` tarball (e.g. a GitHub source
+    # download of a release). export-subst filled in .git_archival.txt, so we
+    # can recover the commit and detect a release tag from it (see .gitattributes).
+    local node_abbrev describe
+    node_abbrev=$(sed -n 's/^node-abbrev: //p' .git_archival.txt)
+    describe=$(sed -n 's/^describe: //p' .git_archival.txt)
+    : "${commit:=${node_abbrev:-unknown}}"
+    if [[ -z "$channel" && "$describe" == "v$version" ]]; then channel="release"; fi
   fi
   : "${commit:=unknown}"
   : "${channel:=core}"
